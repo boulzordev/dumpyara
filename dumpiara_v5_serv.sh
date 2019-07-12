@@ -10,9 +10,12 @@ else
 fi
 ORG=AndroidDumps #for orgs support, here can write your org name
 axel -a -n64 ${URL:?} #download rom
+IFS='?'
 FILE=${URL##*/}
 EXTENSION=${URL##*.}
 UNZIP_DIR=${FILE/.$EXTENSION/}
+read -ra CLEANED <<< "${FILE}" #Cleanup query strings if any
+FILE=${CLEANED[0]}
 
 if [[ "${EXTENSION}" == "tgz" ]]; then
     tar xf ${FILE}
@@ -38,9 +41,48 @@ else
         fi
         python2 ~/extract_android_ota_payload/extract_android_ota_payload.py payload.bin
     fi
+
 fi
 
 rm -fv $OLDPWD/*.zip
+
+if [[ -f "servicefile.xml" ]]; then # For Moto firmwares only
+    if [[ -f "system.img_sparsechunk.0" ]]; then
+            ../simg2img system.img_sparsechunk* system.img.tmp
+            offset=`LANG=C grep -aobP -m1 '\x53\xEF' system.img.tmp | head -1 | awk '{print $1 - 1080}'`
+            if [[ "$offset" == 128055 ]]; then
+                offset=131072
+            fi
+            dd if=system.img.tmp of=system.img ibs=$offset skip=1
+            rm system.img_sparsechunk*
+            rm system.img.tmp
+    fi
+    if [[ -f "vendor.img" ]]; then
+            mv vendor.img vendor.img.tmp
+            ../simg2img vendor.img.tmp vendor.unsp
+            offset=`LANG=C grep -aobP -m1 '\x53\xEF' vendor.unsp | head -1 | awk '{print $1 - 1080}'`
+            if [[ "$offset" == 128055 ]]; then
+                offset=131072
+            fi
+            dd if=vendor.unsp of=vendor.img ibs=$offset skip=1
+            rm vendor.img.tmp
+            rm vendor.uns
+    fi
+    if [[ -f "vendor.img_sparsechunk.0" ]]; then
+            ../simg2img vendor.img_sparsechunk* vendor.img.tmp
+            offset=`LANG=C grep -aobP -m1 '\x53\xEF' vendor.img.tmp | head -1 | awk '{print $1 - 1080}'`
+            if [[ "$offset" == 128055 ]]; then
+                offset=131072
+            fi
+            dd if=vendor.img.tmp of=vendor.img ibs=$offset skip=1
+            rm vendor.img_sparsechunk*
+            rm vendor.img.tmp
+    fi
+    mv oem.img oem.img.tmp
+    ../simg2img oem.img.tmp oem.img
+    ../simg2img NON-HLOS.bin modem.img
+fi
+
 for p in system vendor cust odm oem; do
     brotli -d $p.new.dat.br &>/dev/null ; #extract br
     cat $p.new.dat.{0..999} 2>/dev/null >> $p.new.dat #merge split Vivo(?) sdat
@@ -91,6 +133,7 @@ ls system/build.prop 2>/dev/null || ls system/system/build.prop 2>/dev/null || {
 flavor=$(grep -oP "(?<=^ro.build.flavor=).*" -hs {system,system/system,vendor}/build.prop)
 [[ -z "${flavor}" ]] && flavor=$(grep -oP "(?<=^ro.vendor.build.flavor=).*" -hs vendor/build.prop)
 [[ -z "${flavor}" ]] && flavor=$(grep -oP "(?<=^ro.system.build.flavor=).*" -hs {system,system/system}/build.prop)
+[[ -z "${flavor}" ]] && flavor=$(grep -oP "(?<=^ro.build.type=).*" -hs {system,system/system}/build.prop)
 release=$(grep -oP "(?<=^ro.build.version.release=).*" -hs {system,system/system,vendor}/build.prop)
 [[ -z "${release}" ]] && release=$(grep -oP "(?<=^ro.vendor.build.version.release=).*" -hs vendor/build.prop)
 [[ -z "${release}" ]] && release=$(grep -oP "(?<=^ro.system.build.version.release=).*" -hs {system,system/system}/build.prop)
